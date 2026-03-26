@@ -1,17 +1,28 @@
+// ============================================================
+//  server.js — Secure message broker for render.com
+//  Node.js >= 18, no database, in-memory storage
+// ============================================================
+
 const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
+
 const app = express();
 
+// ---------- middleware ----------
 app.use(cors());
 app.use(express.json({ limit: '64kb' }));
 
+// ---------- constants ----------
 const MESSAGE_TTL   = 30_000;   // сообщение живёт 30 с
 const USER_TTL      = 120_000;  // пользователь «жив» 2 мин
 const MAX_PER_CH    = 200;      // макс. сообщений в канале
 const CLEANUP_EVERY = 10_000;   // интервал очистки
+
+// ---------- storage ----------
 const rooms = Object.create(null);
 
+// ---------- helpers ----------
 function getRoom(id) {
   if (!rooms[id]) rooms[id] = { users: Object.create(null),
                                  channels: Object.create(null) };
@@ -42,6 +53,8 @@ function cleanup() {
 }
 
 setInterval(cleanup, CLEANUP_EVERY);
+
+// ---------- routes ----------
 
 app.get('/', (_req, res) => {
   res.json({
@@ -93,7 +106,6 @@ app.post('/send', (req, res) => {
   };
 
   r.channels[channel].push(msg);
-
   if (r.channels[channel].length > MAX_PER_CH)
     r.channels[channel] = r.channels[channel].slice(-MAX_PER_CH);
 
@@ -110,7 +122,6 @@ app.post('/poll', (req, res) => {
 
   const r = rooms[room];
   touchUser(r, user);
-
   const result = {};
 
   for (const ch in r.channels) {
@@ -134,5 +145,6 @@ app.post('/poll', (req, res) => {
   });
 });
 
+// ---------- start ----------
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Broker on :${PORT}`));
