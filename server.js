@@ -26,7 +26,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: '64kb' }));
+app.use(express.json({ limit: '1024kb' }));
 
 // ---------- constants ----------
 const MESSAGE_TTL   = 30_000;   // сообщение живёт 30 с
