@@ -15,7 +15,6 @@ const REQUIRED_ENV = [
   'PASSWORD_KEY_2',
   'GIST_ID',
   'GITHUB_TOKEN',
-  'CORS_ORIGIN',
 ];
 
 for (const key of REQUIRED_ENV) {
@@ -291,7 +290,7 @@ app.use((_req, res, next) => {
 });
 
 app.use(cors({
-  origin:         process.env.CORS_ORIGIN,
+  origin:         process.env.CORS_ORIGIN || '*',
   methods:        ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials:    false,
