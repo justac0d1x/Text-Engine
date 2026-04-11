@@ -1,5 +1,5 @@
 // ============================================================
-//  server.js — Secure message broker with Gist authentication
+//  server.js — FreeFly Message Broker with Gist authentication
 //  Node.js >= 18, user database in GitHub Gist
 //  Optimized for Render.com deployment
 // ============================================================
