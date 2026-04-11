@@ -1,6 +1,7 @@
 // ============================================================
 //  server.js — Secure message broker with Gist authentication
 //  Node.js >= 18, user database in GitHub Gist
+//  Optimized for Render.com deployment
 // ============================================================
 
 'use strict';
@@ -8,6 +9,10 @@
 const express = require('express');
 const cors    = require('cors');
 const crypto  = require('crypto');
+
+// ============================================================
+// Environment validation
+// ============================================================
 
 const REQUIRED_ENV = [
   'GIST_DECRYPT_KEY',
@@ -29,6 +34,10 @@ const PASSWORD_KEY_1   = process.env.PASSWORD_KEY_1;
 const PASSWORD_KEY_2   = process.env.PASSWORD_KEY_2;
 const GIST_ID          = process.env.GIST_ID;
 const GITHUB_TOKEN     = process.env.GITHUB_TOKEN;
+
+// ============================================================
+// Configuration
+// ============================================================
 
 const MESSAGE_TTL            = 30_000;
 const USER_TTL               = 120_000;
@@ -53,6 +62,10 @@ const SAFE_NAME_RE = /^[\w\-]{1,64}$/;
 const UUID_RE      = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HEX_RE       = /^[0-9a-f]+$/i;
 
+// ============================================================
+// Rate limiting
+// ============================================================
+
 const loginAttempts = new Map();
 const apiAttempts   = new Map();
 
@@ -69,6 +82,10 @@ function isRateLimited(map, ip, max) {
   rec.count++;
   return rec.count > max;
 }
+
+// ============================================================
+// Encryption utilities
+// ============================================================
 
 function deriveKey(keyStr) {
   return crypto.createHash('sha256').update(keyStr).digest();
@@ -119,6 +136,10 @@ function decrypt(ciphertext, keyStr) {
   ]).toString('utf8');
 }
 
+// ============================================================
+// User authentication
+// ============================================================
+
 function userToPassword(username) {
   const combinedKey = PASSWORD_KEY_1 + ':' + PASSWORD_KEY_2;
   return crypto.createHmac('sha256', combinedKey)
@@ -162,6 +183,7 @@ async function fetchUsersDB() {
 
     usersDBCache = users;
     lastDBFetch  = now;
+    console.log(`[Gist] Successfully fetched ${users.length} users`);
     return users;
 
   } catch (err) {
@@ -189,6 +211,10 @@ async function verifyCredentials(username, password) {
 
   return match && userExists;
 }
+
+// ============================================================
+// In-memory storage
+// ============================================================
 
 const rooms                 = Object.create(null);
 const authenticatedSessions = new Map();
@@ -241,6 +267,10 @@ function verifySession(sessionId) {
   return session;
 }
 
+// ============================================================
+// Cleanup task
+// ============================================================
+
 function cleanup() {
   const now = Date.now();
 
@@ -276,10 +306,16 @@ function cleanup() {
 
 setInterval(cleanup, CLEANUP_EVERY).unref();
 
+// ============================================================
+// Express app setup
+// ============================================================
+
 const app = express();
 
+// Trust Render's proxy
 app.set('trust proxy', 1);
 
+// Security headers
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -289,6 +325,7 @@ app.use((_req, res, next) => {
   next();
 });
 
+// CORS
 app.use(cors({
   origin:         process.env.CORS_ORIGIN || '*',
   methods:        ['GET', 'POST', 'OPTIONS'],
@@ -296,11 +333,34 @@ app.use(cors({
   credentials:    false,
 }));
 
+// Body parser
 app.use(express.json({ limit: '128kb' }));
 
+// ============================================================
+// Health check endpoints (for Render)
+// ============================================================
+
 app.get('/', (_req, res) => {
-  res.json({ status: 'ok' });
+  res.json({ 
+    status: 'ok',
+    service: 'secure-msg-broker',
+    version: '1.0.0'
+  });
 });
+
+app.get('/health', (_req, res) => {
+  res.status(200).json({ 
+    status: 'healthy',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    sessions: authenticatedSessions.size,
+    rooms: Object.keys(rooms).length
+  });
+});
+
+// ============================================================
+// API endpoints
+// ============================================================
 
 app.post('/login', async (req, res) => {
   const ip = req.ip ?? 'unknown';
@@ -508,12 +568,64 @@ app.post('/poll', (req, res) => {
   res.json({ ok: true, messages: result, users: Object.keys(r.users) });
 });
 
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ error: 'Not found' });
+});
+
+// Error handler
+app.use((err, req, res, next) => {
+  console.error('[ERROR]', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+// ============================================================
+// Graceful shutdown
+// ============================================================
+
 function shutdown(signal) {
-  console.log(`[broker] ${signal} received, shutting down`);
-  process.exit(0);
+  console.log(`[broker] ${signal} received, shutting down gracefully...`);
+  
+  // Stop accepting new connections
+  server.close(() => {
+    console.log('[broker] Server closed');
+    process.exit(0);
+  });
+
+  // Force shutdown after 10 seconds
+  setTimeout(() => {
+    console.error('[broker] Forced shutdown after timeout');
+    process.exit(1);
+  }, 10_000);
 }
+
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT',  () => shutdown('SIGINT'));
 
-const PORT = Number(process.env.PORT) || 3000;
-app.listen(PORT, () => console.log(`[broker] listening on :${PORT}`));
+// ============================================================
+// Server startup
+// ============================================================
+
+const PORT = Number(process.env.PORT) || 10000;
+const HOST = '0.0.0.0'; // Critical for Render
+
+// Pre-fetch user database
+fetchUsersDB()
+  .then(() => console.log('[broker] Initial user database fetch completed'))
+  .catch(err => console.error('[broker] Initial DB fetch failed (will retry):', err.message));
+
+const server = app.listen(PORT, HOST, () => {
+  console.log('='.repeat(60));
+  console.log('[broker] ✓ Server started successfully');
+  console.log(`[broker] ✓ Listening on ${HOST}:${PORT}`);
+  console.log(`[broker] ✓ Environment: ${process.env.NODE_ENV || 'production'}`);
+  console.log(`[broker] ✓ CORS origin: ${process.env.CORS_ORIGIN || '*'}`);
+  console.log(`[broker] ✓ Node version: ${process.version}`);
+  console.log('='.repeat(60));
+});
+
+// Handle server errors
+server.on('error', (err) => {
+  console.error('[FATAL] Server error:', err);
+  process.exit(1);
+});
