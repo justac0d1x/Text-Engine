@@ -1,4 +1,4 @@
-# Secure Message Broker
+# FreeFly Message Broker
 
 Легковесный in-memory message broker с аутентификацией через GitHub Gist на Express. Без базы данных — всё хранится в оперативной памяти, пользователи в зашифрованном Gist.
 
